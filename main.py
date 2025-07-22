@@ -7,7 +7,6 @@ from telegram import (
     Update,
     Document,
     BotCommand,
-    ReplyKeyboardMarkup,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
 )
@@ -21,7 +20,7 @@ from telegram.ext import (
     ContextTypes,
 )
 
-# Estados del diálogo de /addtrip
+# --- Estados para ConversationHandler ---
 ASK_NAME, ASK_DATE = range(2)
 
 # --- Configuración ---
@@ -36,7 +35,7 @@ if not os.path.exists(FILES_DIR):
 logging.basicConfig(level=logging.INFO)
 
 
-# --- Funciones de almacenamiento ---
+# --- Funciones para leer y guardar datos ---
 def load_data():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r") as f:
@@ -49,7 +48,7 @@ def save_data(data):
         json.dump(data, f, indent=2)
 
 
-# --- Comandos y acciones ---
+# --- Comandos ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("📥 Añadir viaje", callback_data="menu_addtrip")],
@@ -72,7 +71,6 @@ async def list_trips(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not data:
         await update.effective_message.reply_text("📭 No tienes viajes guardados.")
         return
-
     reply = "📅 Tus viajes:\n"
     for name, info in data.items():
         reply += f"• {name}: {info['date']} ({len(info['files'])} archivos adjuntos)\n"
@@ -81,8 +79,7 @@ async def list_trips(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     document: Document = update.message.document
-    trip_name = update.message.caption  # Usa la leyenda como nombre del viaje
-
+    trip_name = update.message.caption
     if not trip_name:
         await update.message.reply_text(
             "❗ Adjuntá el archivo con una leyenda que contenga el nombre del viaje."
@@ -90,7 +87,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     file = await context.bot.get_file(document.file_id)
-    file_path = os.path.join(FILES_DIR, f"{trip_name}_{document.file_name}")
+    safe_name = trip_name.replace(" ", "_")
+    file_path = os.path.join(FILES_DIR, f"{safe_name}_{document.file_name}")
     await file.download_to_drive(file_path)
 
     data = load_data()
@@ -104,26 +102,22 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Ese viaje no existe. Usá /addtrip primero.")
 
 
-# --- /addtrip Conversación ---
+# --- Conversación para /addtrip ---
 async def add_trip_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.args:
+    if context.args and len(context.args) >= 2:
+        trip_name = context.args[0]
+        date_str = context.args[1]
         try:
-            trip_name = context.args[0]
-            date_str = context.args[1]
             datetime.datetime.strptime(date_str, "%Y-%m-%d")
-
             data = load_data()
             data[trip_name] = {"date": date_str, "files": []}
             save_data(data)
-
             await update.message.reply_text(
                 f"✅ Viaje '{trip_name}' guardado para el {date_str}."
             )
             return ConversationHandler.END
-        except Exception:
-            await update.message.reply_text(
-                "⚠️ Formato inválido. Usa `/addtrip <nombre> <YYYY-MM-DD>` o seguí el modo interactivo."
-            )
+        except ValueError:
+            await update.message.reply_text("⚠️ Fecha inválida. Usa formato YYYY-MM-DD.")
             return ConversationHandler.END
     else:
         await update.message.reply_text("✏️ ¿Cómo se llama el viaje?")
@@ -143,11 +137,9 @@ async def ask_trip_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         datetime.datetime.strptime(date_str, "%Y-%m-%d")
         trip_name = context.user_data["trip_name"]
-
         data = load_data()
         data[trip_name] = {"date": date_str, "files": []}
         save_data(data)
-
         await update.message.reply_text(
             f"✅ Viaje '{trip_name}' guardado para el {date_str}."
         )
@@ -176,13 +168,25 @@ async def daily_check(context: ContextTypes.DEFAULT_TYPE):
 
 async def start_notifications(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    context.job_queue.run_daily(
-        daily_check, time=datetime.time(hour=9), chat_id=chat_id
+    job_queue = context.application.job_queue
+
+    # Eliminar jobs anteriores para este chat para evitar duplicados
+    current_jobs = job_queue.get_jobs_by_name(str(chat_id))
+    for job in current_jobs:
+        job.schedule_removal()
+
+    job_queue.run_daily(
+        daily_check,
+        time=datetime.time(hour=9, minute=0),
+        chat_id=chat_id,
+        name=str(chat_id),
     )
-    await update.message.reply_text("🔔 Notificaciones diarias activadas a las 9:00.")
+    await update.effective_message.reply_text(
+        "🔔 Notificaciones diarias activadas a las 9:00."
+    )
 
 
-# --- Manejo del menú inline ---
+# --- Manejo de menú inline ---
 async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -203,7 +207,7 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start_notifications(update, context)
 
 
-# --- Comandos nativos ---
+# --- Comandos para Telegram ---
 async def set_commands(app):
     await app.bot.set_my_commands(
         [
@@ -229,7 +233,6 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    # Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("listtrips", list_trips))
     app.add_handler(CommandHandler("startnotifications", start_notifications))
@@ -237,7 +240,6 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_menu, pattern="^menu_"))
     app.add_handler(conv_handler)
 
-    # Comandos del menú de Telegram
     async def post_init(app):
         await set_commands(app)
 
