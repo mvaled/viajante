@@ -9,3 +9,8 @@ dependencies = [
     "python-telegram-bot>=22.3",
     "schedule>=1.2.2",
 ]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.12.4",
+]

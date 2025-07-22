@@ -2,24 +2,27 @@ import os
 import json
 import logging
 import datetime
-import asyncio
 from dotenv import load_dotenv
 from telegram import (
     Update,
-    BotCommand,
     Document,
+    BotCommand,
     ReplyKeyboardMarkup,
-    InlineKeyboardButton,
     InlineKeyboardMarkup,
+    InlineKeyboardButton,
 )
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
+    ConversationHandler,
     CallbackQueryHandler,
     filters,
     ContextTypes,
 )
+
+# Estados del diálogo de /addtrip
+ASK_NAME, ASK_DATE = range(2)
 
 # --- Configuración ---
 load_dotenv()
@@ -54,7 +57,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👋 Hola, ¿qué querés hacer?", reply_markup=reply_markup
     )
 
-    # Botones inline también (opcional)
     inline_kb = [
         [InlineKeyboardButton("Añadir viaje", callback_data="addtrip")],
         [InlineKeyboardButton("Ver viajes", callback_data="listtrips")],
@@ -62,28 +64,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "O usá los botones:", reply_markup=InlineKeyboardMarkup(inline_kb)
     )
-
-
-async def add_trip(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        parts = context.args
-        if len(parts) < 2:
-            await update.message.reply_text("Uso: /addtrip <nombre_viaje> <YYYY-MM-DD>")
-            return
-
-        trip_name = parts[0]
-        date_str = parts[1]
-        datetime.datetime.strptime(date_str, "%Y-%m-%d")  # Validación
-
-        data = load_data()
-        data[trip_name] = {"date": date_str, "files": []}
-        save_data(data)
-        await update.message.reply_text(
-            f"✅ Viaje '{trip_name}' guardado para el {date_str}."
-        )
-
-    except ValueError:
-        await update.message.reply_text("⚠️ Fecha inválida. Usa el formato YYYY-MM-DD.")
 
 
 async def list_trips(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -123,6 +103,78 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Ese viaje no existe. Usá /addtrip primero.")
 
 
+# --- /addtrip Conversación ---
+async def add_trip_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.args:
+        try:
+            trip_name = context.args[0]
+            date_str = context.args[1]
+            datetime.datetime.strptime(date_str, "%Y-%m-%d")
+
+            data = load_data()
+            data[trip_name] = {"date": date_str, "files": []}
+            save_data(data)
+
+            await update.message.reply_text(
+                f"✅ Viaje '{trip_name}' guardado para el {date_str}."
+            )
+            return ConversationHandler.END
+        except Exception:
+            await update.message.reply_text(
+                "⚠️ Formato inválido. Usa `/addtrip <nombre> <YYYY-MM-DD>` o seguí el modo interactivo."
+            )
+            return ConversationHandler.END
+    else:
+        await update.message.reply_text("✏️ ¿Cómo se llama el viaje?")
+        return ASK_NAME
+
+
+async def ask_trip_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["trip_name"] = update.message.text.strip()
+    await update.message.reply_text(
+        "📅 ¿Qué fecha tiene el viaje? (formato YYYY-MM-DD)"
+    )
+    return ASK_DATE
+
+
+async def ask_trip_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    date_str = update.message.text.strip()
+    try:
+        datetime.datetime.strptime(date_str, "%Y-%m-%d")
+        trip_name = context.user_data["trip_name"]
+
+        data = load_data()
+        data[trip_name] = {"date": date_str, "files": []}
+        save_data(data)
+
+        await update.message.reply_text(
+            f"✅ Viaje '{trip_name}' guardado para el {date_str}."
+        )
+        return ConversationHandler.END
+    except ValueError:
+        await update.message.reply_text("❌ Fecha inválida. Usá el formato YYYY-MM-DD.")
+        return ASK_DATE
+
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("❌ Operación cancelada.")
+    return ConversationHandler.END
+
+
+# --- Botones inline ---
+async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "addtrip":
+        await query.edit_message_text(
+            "✍️ Usá el comando:\n`/addtrip <nombre> <YYYY-MM-DD>` o simplemente `/addtrip`",
+            parse_mode="Markdown",
+        )
+    elif query.data == "listtrips":
+        await list_trips(update, context)
+
+
 # --- Notificaciones ---
 async def daily_check(context: ContextTypes.DEFAULT_TYPE):
     data = load_data()
@@ -143,27 +195,15 @@ async def start_notifications(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text("🔔 Notificaciones diarias activadas a las 9:00.")
 
 
-# --- Botones inline ---
-async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    if query.data == "addtrip":
-        await query.edit_message_text(
-            "✍️ Usá el comando:\n`/addtrip <nombre> <YYYY-MM-DD>`", parse_mode="Markdown"
-        )
-    elif query.data == "listtrips":
-        await list_trips(update, context)
-
-
-# --- Configurar menú de comandos ---
+# --- Menú de comandos ---
 async def set_commands(app):
     await app.bot.set_my_commands(
         [
             BotCommand("addtrip", "Añadir un nuevo viaje"),
             BotCommand("listtrips", "Listar tus viajes"),
             BotCommand("startnotifications", "Activar recordatorios diarios"),
-            BotCommand("start", "Mostrar el menú"),
+            BotCommand("cancel", "Cancelar conversación"),
+            BotCommand("start", "Mostrar menú"),
         ]
     )
 
@@ -172,15 +212,23 @@ async def set_commands(app):
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("addtrip", add_trip_start)],
+        states={
+            ASK_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_trip_name)],
+            ASK_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_trip_date)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
     # Handlers
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("addtrip", add_trip))
     app.add_handler(CommandHandler("listtrips", list_trips))
     app.add_handler(CommandHandler("startnotifications", start_notifications))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(CallbackQueryHandler(handle_button))
+    app.add_handler(conv_handler)
 
-    # Set menú comandos
     async def post_init(app):
         await set_commands(app)
 
