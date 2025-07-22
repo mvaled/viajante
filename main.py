@@ -49,33 +49,34 @@ def save_data(data):
         json.dump(data, f, indent=2)
 
 
-# --- Comandos del bot ---
+# --- Comandos y acciones ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [["/addtrip", "/listtrips"], ["/startnotifications"]]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text(
-        "👋 Hola, ¿qué querés hacer?", reply_markup=reply_markup
-    )
-
-    inline_kb = [
-        [InlineKeyboardButton("Añadir viaje", callback_data="addtrip")],
-        [InlineKeyboardButton("Ver viajes", callback_data="listtrips")],
+    keyboard = [
+        [InlineKeyboardButton("📥 Añadir viaje", callback_data="menu_addtrip")],
+        [InlineKeyboardButton("📋 Ver viajes", callback_data="menu_listtrips")],
+        [InlineKeyboardButton("📎 Subir archivo", callback_data="menu_upload")],
+        [
+            InlineKeyboardButton(
+                "🔔 Activar notificaciones", callback_data="menu_notify"
+            )
+        ],
     ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "O usá los botones:", reply_markup=InlineKeyboardMarkup(inline_kb)
+        "👋 Bienvenido. Elegí una opción:", reply_markup=reply_markup
     )
 
 
 async def list_trips(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = load_data()
     if not data:
-        await update.message.reply_text("📭 No tienes viajes guardados.")
+        await update.effective_message.reply_text("📭 No tienes viajes guardados.")
         return
 
     reply = "📅 Tus viajes:\n"
     for name, info in data.items():
         reply += f"• {name}: {info['date']} ({len(info['files'])} archivos adjuntos)\n"
-    await update.message.reply_text(reply)
+    await update.effective_message.reply_text(reply)
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -161,20 +162,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# --- Botones inline ---
-async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    if query.data == "addtrip":
-        await query.edit_message_text(
-            "✍️ Usá el comando:\n`/addtrip <nombre> <YYYY-MM-DD>` o simplemente `/addtrip`",
-            parse_mode="Markdown",
-        )
-    elif query.data == "listtrips":
-        await list_trips(update, context)
-
-
 # --- Notificaciones ---
 async def daily_check(context: ContextTypes.DEFAULT_TYPE):
     data = load_data()
@@ -195,7 +182,28 @@ async def start_notifications(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text("🔔 Notificaciones diarias activadas a las 9:00.")
 
 
-# --- Menú de comandos ---
+# --- Manejo del menú inline ---
+async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "menu_addtrip":
+        await query.message.reply_text(
+            "✍️ Escribí el comando `/addtrip` para añadir un viaje.",
+            parse_mode="Markdown",
+        )
+    elif query.data == "menu_listtrips":
+        await list_trips(update, context)
+    elif query.data == "menu_upload":
+        await query.message.reply_text(
+            "📎 Enviá un archivo con el *nombre del viaje* como leyenda.",
+            parse_mode="Markdown",
+        )
+    elif query.data == "menu_notify":
+        await start_notifications(update, context)
+
+
+# --- Comandos nativos ---
 async def set_commands(app):
     await app.bot.set_my_commands(
         [
@@ -203,7 +211,7 @@ async def set_commands(app):
             BotCommand("listtrips", "Listar tus viajes"),
             BotCommand("startnotifications", "Activar recordatorios diarios"),
             BotCommand("cancel", "Cancelar conversación"),
-            BotCommand("start", "Mostrar menú"),
+            BotCommand("start", "Mostrar el menú principal"),
         ]
     )
 
@@ -226,9 +234,10 @@ def main():
     app.add_handler(CommandHandler("listtrips", list_trips))
     app.add_handler(CommandHandler("startnotifications", start_notifications))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
-    app.add_handler(CallbackQueryHandler(handle_button))
+    app.add_handler(CallbackQueryHandler(handle_menu, pattern="^menu_"))
     app.add_handler(conv_handler)
 
+    # Comandos del menú de Telegram
     async def post_init(app):
         await set_commands(app)
 
