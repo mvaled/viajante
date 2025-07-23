@@ -56,7 +56,7 @@ def restricted(func):
         user_id = update.effective_user.id
         if user_id not in ALLOWED_USERS:
             await update.effective_message.reply_text(
-                "⛔ No estás autorizado para usar este bot."
+                "Lo siento, pero no estás autorizado para usar este bot."
             )
             return
         return await func(update, context, *args, **kwargs)
@@ -193,7 +193,7 @@ async def collect_documents(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await file.download_to_drive(file_path)
 
     context.user_data["files"].append(file_path)
-    await update.message.reply_text("✅ Archivo guardado. Puedes enviar más o escribir /cancel para terminar.")
+    await update.message.reply_text("✅ Archivo guardado. Puedes enviar más o escribir /finish para terminar, o /cancel para salir sin guardar.")
     return ASK_DOCUMENTS
 
 @restricted
