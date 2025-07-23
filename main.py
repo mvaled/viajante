@@ -26,7 +26,10 @@ ASK_NAME, ASK_START_DATE, ASK_END_DATE, ASK_DOCUMENTS = range(4)
 
 # --- Configuración ---
 load_dotenv()
-ALLOWED_USERS = {885850042, 1615047788}
+ALLOWED_USERS = {
+    885850042,  # mvaled
+    1615047788,  # elmulas
+}
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 DATA_FILE = "viajes_data.json"
 FILES_DIR = "files"
