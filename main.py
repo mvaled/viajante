@@ -321,7 +321,6 @@ async def set_commands(app):
     )
 
 
-@restricted
 async def get_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     await update.message.reply_text(
